@@ -34,6 +34,8 @@
             z-index: 10;
             pointer-events: all;
             transition: transform 0.3s ease;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
         }
 
         #clock:hover {
@@ -69,7 +71,7 @@
         const SPAWN_INTERVAL = 2000;
         const SPAWN_AMOUNT = 3;
         const CENTER_SOFT_RADIUS = 180;
-        const COLLECTION_RADIUS = 100;
+        const COLLECTION_RADIUS = 50;
         const PARTICLES_NEEDED = 20;
 
         let particles = [];
@@ -88,7 +90,7 @@
             const points = [];
             for (let i = 0; i < numPoints; i++) {
                 const t = (i / numPoints) * Math.PI * 2;
-                const scale = 8;
+                const scale = 4; // Half the original size
                 const x = scale * 16 * Math.pow(Math.sin(t), 3);
                 const y = -scale * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
                 points.push({ x, y, angle: t });
@@ -208,7 +210,7 @@
                 // Create multiple heart outlines that expand
                 for (let wave = 0; wave < 3; wave++) {
                     for (let t = 0; t < Math.PI * 2; t += 0.05) {
-                        const scale = 12 + wave * 4;
+                        const scale = 6 + wave * 2; // Half the original size
                         const hx = x + scale * 16 * Math.pow(Math.sin(t), 3);
                         const hy = y - scale * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
 
@@ -247,7 +249,7 @@
                 // Sparkles
                 for (let i = 0; i < 50; i++) {
                     const angle = Math.random() * Math.PI * 2;
-                    const distance = Math.random() * 130 + 20;
+                    const distance = Math.random() * 65 + 10; // Half the original distance
                     this.sparkles.push({
                         x: x + Math.cos(angle) * distance,
                         y: y + Math.sin(angle) * distance,
@@ -369,8 +371,14 @@
                 particles.push(new Particle());
             }
 
-            // Setup clock click handler
-            document.getElementById('clock').addEventListener('click', toggleClockMode);
+            // Setup clock click and touch handlers
+            const clockElement = document.getElementById('clock');
+            clockElement.addEventListener('click', toggleClockMode);
+            clockElement.addEventListener('touchend', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleClockMode();
+            });
 
             // Update clock
             updateClock();
@@ -527,20 +535,42 @@
 
         function touchMoved() {
             if (touches.length > 0) {
+                // Check if touch is on clock element
+                const clockEl = document.getElementById('clock');
+                const rect = clockEl.getBoundingClientRect();
+                const touchX = touches[0].x;
+                const touchY = touches[0].y;
+
+                if (touchX >= rect.left && touchX <= rect.right &&
+                    touchY >= rect.top && touchY <= rect.bottom) {
+                    return false; // Don't process if touching clock
+                }
+
                 isMouseActive = true;
                 lastMouseMove = millis();
-                cursorX = touches[0].x;
-                cursorY = touches[0].y;
+                cursorX = touchX;
+                cursorY = touchY;
             }
             return false;
         }
 
         function touchStarted() {
             if (touches.length > 0) {
+                // Check if touch is on clock element
+                const clockEl = document.getElementById('clock');
+                const rect = clockEl.getBoundingClientRect();
+                const touchX = touches[0].x;
+                const touchY = touches[0].y;
+
+                if (touchX >= rect.left && touchX <= rect.right &&
+                    touchY >= rect.top && touchY <= rect.bottom) {
+                    return false; // Don't process if touching clock
+                }
+
                 isMouseActive = true;
                 lastMouseMove = millis();
-                cursorX = touches[0].x;
-                cursorY = touches[0].y;
+                cursorX = touchX;
+                cursorY = touchY;
             }
             return false;
         }

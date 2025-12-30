@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Love Counter</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            overflow: hidden;
+            font-family: 'Georgia', serif;
+            background: white;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #clock {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #E0779A;
+            cursor: pointer;
+            user-select: none;
+            z-index: 10;
+            pointer-events: all;
+            transition: transform 0.3s ease;
+        }
+
+        #clock:hover {
+            transform: translate(-50%, -50%) scale(1.05);
+        }
+
+        #clock-number {
+            font-size: clamp(48px, 10vw, 120px);
+            font-weight: bold;
+            line-height: 1;
+            text-shadow: 0 0 20px rgba(224, 119, 154, 0.3);
+        }
+
+        #clock-label {
+            font-size: clamp(16px, 3vw, 24px);
+            margin-top: 10px;
+            opacity: 0.7;
+            letter-spacing: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div id="clock">
+        <div id="clock-number">0</div>
+        <div id="clock-label">days</div>
+    </div>
+
+    <script>
+        // Configuration
+        const LINE_COLOR = '#E0779A';
+        const START_DATE = new Date('2025-11-21T22:30:00');
+        const MAX_PARTICLES = 80;
+        const SPAWN_INTERVAL = 2000;
+        const SPAWN_AMOUNT = 3;
+        const CENTER_SOFT_RADIUS = 180;
+        const COLLECTION_RADIUS = 100;
+        const PARTICLES_NEEDED = 20;
+
+        let particles = [];
+        let clockMode = 0; // 0=days, 1=hours, 2=minutes, 3=seconds
+        let lastSpawnTime = 0;
+        let collectedParticles = [];
+        let heartExplosions = [];
+        let isMouseActive = false;
+        let lastMouseMove = 0;
+        let cursorX = 0;
+        let cursorY = 0;
+        let heartPoints = [];
+
+        // Heart shape positions (pre-calculated for smooth distribution)
+        function calculateHeartPoints(numPoints) {
+            const points = [];
+            for (let i = 0; i < numPoints; i++) {
+                const t = (i / numPoints) * Math.PI * 2;
+                const scale = 8;
+                const x = scale * 16 * Math.pow(Math.sin(t), 3);
+                const y = -scale * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+                points.push({ x, y, angle: t });
+            }
+            return points;
+        }
+
+        class Particle {
+            constructor(x, y) {
+                this.x = x !== undefined ? x : Math.random() * windowWidth;
+                this.y = y !== undefined ? y : Math.random() * windowHeight;
+                this.baseX = this.x;
+                this.baseY = this.y;
+                this.vx = Math.random() * 1 - 0.5;
+                this.vy = Math.random() * 1 - 0.5;
+                this.noiseOffsetX = Math.random() * 1000;
+                this.noiseOffsetY = Math.random() * 1000;
+                this.collected = false;
+                this.size = 4;
+                this.pulsePhase = Math.random() * Math.PI * 2;
+                this.heartIndex = -1;
+                this.glowSize = 0;
+            }
+
+            update() {
+                if (this.collected) {
+                    // Collected particles follow cursor in heart formation
+                    if (this.heartIndex >= 0 && this.heartIndex < heartPoints.length) {
+                        const targetPoint = heartPoints[this.heartIndex];
+                        const targetX = cursorX + targetPoint.x;
+                        const targetY = cursorY + targetPoint.y;
+
+                        this.x += (targetX - this.x) * 0.15;
+                        this.y += (targetY - this.y) * 0.15;
+
+                        // Pulse effect
+                        this.pulsePhase += 0.08;
+                        this.size = 5 + Math.sin(this.pulsePhase) * 1.5;
+                        this.glowSize = 12 + Math.sin(this.pulsePhase) * 3;
+                    }
+                    return;
+                }
+
+                // Flowing movement with Perlin noise
+                this.noiseOffsetX += 0.008;
+                this.noiseOffsetY += 0.008;
+
+                let targetX = this.baseX + (noise(this.noiseOffsetX) - 0.5) * 100;
+                let targetY = this.baseY + (noise(this.noiseOffsetY) - 0.5) * 100;
+
+                // Gentle drift
+                this.baseX += this.vx * 0.5;
+                this.baseY += this.vy * 0.5;
+
+                // Soft center avoidance
+                const distFromCenter = dist(this.x, this.y, width / 2, height / 2);
+                if (distFromCenter < CENTER_SOFT_RADIUS) {
+                    const angle = Math.atan2(this.y - height / 2, this.x - width / 2);
+                    const pushStrength = map(distFromCenter, 0, CENTER_SOFT_RADIUS, 1, 0);
+                    targetX += Math.cos(angle) * pushStrength * 3;
+                    targetY += Math.sin(angle) * pushStrength * 3;
+                }
+
+                // Attraction to mouse when active
+                if (isMouseActive && !this.collected) {
+                    const distToMouse = dist(this.x, this.y, cursorX, cursorY);
+                    if (distToMouse < COLLECTION_RADIUS) {
+                        const angle = Math.atan2(cursorY - this.y, cursorX - this.x);
+                        const pullStrength = map(distToMouse, 0, COLLECTION_RADIUS, 8, 2);
+                        targetX += Math.cos(angle) * pullStrength;
+                        targetY += Math.sin(angle) * pullStrength;
+                    }
+                }
+
+                // Smooth movement
+                this.x += (targetX - this.x) * 0.05;
+                this.y += (targetY - this.y) * 0.05;
+
+                // Wrap around screen
+                if (this.baseX < -50) this.baseX = width + 50;
+                if (this.baseX > width + 50) this.baseX = -50;
+                if (this.baseY < -50) this.baseY = height + 50;
+                if (this.baseY > height + 50) this.baseY = -50;
+
+                // Pulse effect
+                this.pulsePhase += 0.05;
+                this.size = 4 + Math.sin(this.pulsePhase) * 1;
+            }
+
+            display() {
+                // Glow effect for particles near mouse or collected
+                if (this.collected || (isMouseActive && dist(this.x, this.y, cursorX, cursorY) < COLLECTION_RADIUS)) {
+                    const glowSize = this.collected ? this.glowSize : map(dist(this.x, this.y, cursorX, cursorY), 0, COLLECTION_RADIUS, 15, 5);
+                    fill(LINE_COLOR + '40');
+                    noStroke();
+                    circle(this.x, this.y, glowSize);
+                }
+
+                // Main particle
+                fill(LINE_COLOR);
+                noStroke();
+                circle(this.x, this.y, this.size);
+            }
+        }
+
+        class HeartExplosion {
+            constructor(x, y, collectedDots) {
+                this.x = x;
+                this.y = y;
+                this.particles = [];
+                this.waves = [];
+                this.sparkles = [];
+                this.alpha = 255;
+                this.done = false;
+                this.time = 0;
+
+                // Create multiple heart outlines that expand
+                for (let wave = 0; wave < 3; wave++) {
+                    for (let t = 0; t < Math.PI * 2; t += 0.05) {
+                        const scale = 12 + wave * 4;
+                        const hx = x + scale * 16 * Math.pow(Math.sin(t), 3);
+                        const hy = y - scale * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+
+                        this.waves.push({
+                            x: hx,
+                            y: hy,
+                            startX: x,
+                            startY: y,
+                            targetX: hx,
+                            targetY: hy,
+                            size: Math.random() * 3 + 2,
+                            life: 1,
+                            delay: wave * 0.2,
+                            progress: 0,
+                            wave: wave
+                        });
+                    }
+                }
+
+                // Explosion particles from collected dots
+                for (let dot of collectedDots) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * 5 + 3;
+                    this.particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        size: Math.random() * 6 + 4,
+                        life: 1,
+                        rotation: Math.random() * Math.PI * 2,
+                        rotationSpeed: Math.random() * 0.4 - 0.2
+                    });
+                }
+
+                // Sparkles
+                for (let i = 0; i < 50; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const distance = Math.random() * 130 + 20;
+                    this.sparkles.push({
+                        x: x + Math.cos(angle) * distance,
+                        y: y + Math.sin(angle) * distance,
+                        size: Math.random() * 4 + 2,
+                        life: Math.random() * 0.5 + 0.5,
+                        delay: Math.random() * 0.5,
+                        flickerSpeed: Math.random() * 0.1 + 0.05
+                    });
+                }
+            }
+
+            update() {
+                this.time += 0.016;
+                this.alpha -= 1.2;
+
+                // Update wave particles
+                for (let p of this.waves) {
+                    if (this.time > p.delay) {
+                        p.progress += 0.02;
+                        if (p.progress <= 1) {
+                            const eased = 1 - Math.pow(1 - p.progress, 3);
+                            p.x = p.startX + (p.targetX - p.startX) * eased;
+                            p.y = p.startY + (p.targetY - p.startY) * eased;
+                        }
+                        p.life -= 0.005;
+                        p.size *= 0.995;
+                    }
+                }
+
+                // Update explosion particles
+                for (let p of this.particles) {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.15;
+                    p.vx *= 0.98;
+                    p.life -= 0.008;
+                    p.size *= 0.99;
+                    p.rotation += p.rotationSpeed;
+                }
+
+                // Update sparkles
+                for (let s of this.sparkles) {
+                    if (this.time > s.delay) {
+                        s.life -= 0.01;
+                        s.size += Math.sin(this.time * 10 * s.flickerSpeed) * 0.5;
+                    }
+                }
+
+                if (this.alpha <= 0) {
+                    this.done = true;
+                }
+            }
+
+            display() {
+                // Draw wave particles
+                for (let p of this.waves) {
+                    if (p.life > 0 && this.time > p.delay) {
+                        const waveAlpha = Math.floor(p.life * this.alpha * 0.8);
+                        fill(LINE_COLOR + waveAlpha.toString(16).padStart(2, '0'));
+                        noStroke();
+                        circle(p.x, p.y, p.size);
+                    }
+                }
+
+                // Draw explosion particles as small hearts
+                for (let p of this.particles) {
+                    if (p.life > 0) {
+                        const pAlpha = Math.floor(p.life * this.alpha);
+                        push();
+                        translate(p.x, p.y);
+                        rotate(p.rotation);
+                        fill(LINE_COLOR + pAlpha.toString(16).padStart(2, '0'));
+                        noStroke();
+
+                        beginShape();
+                        for (let t = 0; t < Math.PI * 2; t += 0.3) {
+                            const s = p.size * 0.3;
+                            const hx = s * 16 * Math.pow(Math.sin(t), 3) / 12;
+                            const hy = -s * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) / 12;
+                            vertex(hx, hy);
+                        }
+                        endShape(CLOSE);
+                        pop();
+                    }
+                }
+
+                // Draw sparkles
+                for (let s of this.sparkles) {
+                    if (s.life > 0 && this.time > s.delay) {
+                        const sAlpha = Math.floor(s.life * this.alpha);
+                        fill(LINE_COLOR + sAlpha.toString(16).padStart(2, '0'));
+                        noStroke();
+
+                        push();
+                        translate(s.x, s.y);
+                        rotate(this.time * 2);
+                        for (let i = 0; i < 4; i++) {
+                            rotate(Math.PI / 2);
+                            line(0, 0, 0, s.size);
+                        }
+                        pop();
+                    }
+                }
+            }
+        }
+
+        function setup() {
+            createCanvas(windowWidth, windowHeight);
+
+            // Calculate heart points after canvas is created
+            heartPoints = calculateHeartPoints(PARTICLES_NEEDED);
+
+            // Initialize cursor position
+            cursorX = width / 2;
+            cursorY = height / 2;
+
+            // Initialize particles
+            for (let i = 0; i < 30; i++) {
+                particles.push(new Particle());
+            }
+
+            // Setup clock click handler
+            document.getElementById('clock').addEventListener('click', toggleClockMode);
+
+            // Update clock
+            updateClock();
+            setInterval(updateClock, 1000);
+        }
+
+        function draw() {
+            background(255);
+
+            // Update cursor position
+            if (isMouseActive) {
+                cursorX = mouseX;
+                cursorY = mouseY;
+            }
+
+            // Spawn new particles at intervals
+            if (millis() - lastSpawnTime > SPAWN_INTERVAL && particles.length < MAX_PARTICLES) {
+                for (let i = 0; i < SPAWN_AMOUNT; i++) {
+                    const edge = Math.floor(Math.random() * 4);
+                    let x, y;
+                    switch(edge) {
+                        case 0: x = Math.random() * width; y = -20; break;
+                        case 1: x = width + 20; y = Math.random() * height; break;
+                        case 2: x = Math.random() * width; y = height + 20; break;
+                        case 3: x = -20; y = Math.random() * height; break;
+                    }
+                    particles.push(new Particle(x, y));
+                }
+                lastSpawnTime = millis();
+            }
+
+            // Check for mouse inactivity
+            if (millis() - lastMouseMove > 100) {
+                isMouseActive = false;
+            }
+
+            // Update particles
+            for (let particle of particles) {
+                particle.update();
+            }
+
+            // Update collected particles
+            for (let particle of collectedParticles) {
+                particle.update();
+            }
+
+            // Draw connections between nearby particles (not collected)
+            stroke(LINE_COLOR + '40');
+            strokeWeight(1.5);
+            noFill();
+
+            for (let i = 0; i < particles.length; i++) {
+                for (let j = i + 1; j < particles.length; j++) {
+                    const d = dist(particles[i].x, particles[i].y, particles[j].x, particles[j].y);
+                    if (d < 100) {
+                        const alpha = Math.floor(map(d, 0, 100, 80, 0));
+                        stroke(LINE_COLOR + alpha.toString(16).padStart(2, '0'));
+                        line(particles[i].x, particles[i].y, particles[j].x, particles[j].y);
+                    }
+                }
+            }
+
+            // Draw uncollected particles
+            for (let particle of particles) {
+                particle.display();
+            }
+
+            // Draw collection indicator
+            if (isMouseActive && collectedParticles.length < PARTICLES_NEEDED) {
+                noFill();
+                stroke(LINE_COLOR + '60');
+                strokeWeight(2);
+                circle(cursorX, cursorY, COLLECTION_RADIUS * 2);
+
+                // Inner pulse circle
+                const pulseSize = COLLECTION_RADIUS * 2 * (0.5 + Math.sin(millis() / 200) * 0.1);
+                stroke(LINE_COLOR + '30');
+                strokeWeight(1);
+                circle(cursorX, cursorY, pulseSize);
+            }
+
+            // Draw collected particles (forming heart)
+            for (let particle of collectedParticles) {
+                particle.display();
+            }
+
+            // Draw connections between collected particles (heart outline)
+            if (collectedParticles.length > 1) {
+                stroke(LINE_COLOR + '80');
+                strokeWeight(2);
+                noFill();
+                for (let i = 0; i < collectedParticles.length; i++) {
+                    const p1 = collectedParticles[i];
+                    const p2 = collectedParticles[(i + 1) % collectedParticles.length];
+                    const d = dist(p1.x, p1.y, p2.x, p2.y);
+                    if (d < 50) {
+                        line(p1.x, p1.y, p2.x, p2.y);
+                    }
+                }
+            }
+
+            // Update and draw heart explosions
+            for (let i = heartExplosions.length - 1; i >= 0; i--) {
+                heartExplosions[i].update();
+                heartExplosions[i].display();
+                if (heartExplosions[i].done) {
+                    heartExplosions.splice(i, 1);
+                }
+            }
+
+            // Check for collection
+            if (isMouseActive && collectedParticles.length < PARTICLES_NEEDED) {
+                checkCollection();
+            }
+        }
+
+        function checkCollection() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const d = dist(particles[i].x, particles[i].y, cursorX, cursorY);
+                if (d < 25) {
+                    particles[i].collected = true;
+                    particles[i].heartIndex = collectedParticles.length;
+                    collectedParticles.push(particles[i]);
+                    particles.splice(i, 1);
+
+                    if (collectedParticles.length >= PARTICLES_NEEDED) {
+                        createHeartExplosion();
+                    }
+                }
+            }
+        }
+
+        function createHeartExplosion() {
+            heartExplosions.push(new HeartExplosion(cursorX, cursorY, [...collectedParticles]));
+            collectedParticles = [];
+
+            // Add celebration particles
+            for (let i = 0; i < 15; i++) {
+                particles.push(new Particle(cursorX + Math.random() * 200 - 100, cursorY + Math.random() * 200 - 100));
+            }
+        }
+
+        function mouseMoved() {
+            isMouseActive = true;
+            lastMouseMove = millis();
+            return false;
+        }
+
+        function mouseDragged() {
+            isMouseActive = true;
+            lastMouseMove = millis();
+            return false;
+        }
+
+        function touchMoved() {
+            if (touches.length > 0) {
+                isMouseActive = true;
+                lastMouseMove = millis();
+                cursorX = touches[0].x;
+                cursorY = touches[0].y;
+            }
+            return false;
+        }
+
+        function touchStarted() {
+            if (touches.length > 0) {
+                isMouseActive = true;
+                lastMouseMove = millis();
+                cursorX = touches[0].x;
+                cursorY = touches[0].y;
+            }
+            return false;
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+        }
+
+        function toggleClockMode() {
+            clockMode = (clockMode + 1) % 4; // Cycle through 0, 1, 2, 3
+            updateClock();
+        }
+
+        function updateClock() {
+            const now = new Date();
+            const diff = now - START_DATE;
+
+            const clockNumber = document.getElementById('clock-number');
+            const clockLabel = document.getElementById('clock-label');
+
+            const totalSeconds = Math.floor(diff / 1000);
+            const totalMinutes = Math.floor(totalSeconds / 60);
+            const totalHours = Math.floor(totalMinutes / 60);
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+
+            switch(clockMode) {
+                case 0: // Days
+                    clockNumber.textContent = days;
+                    clockLabel.textContent = days === 1 ? 'day' : 'days';
+                    break;
+                case 1: // Hours
+                    clockNumber.textContent = totalHours;
+                    clockLabel.textContent = totalHours === 1 ? 'hour' : 'hours';
+                    break;
+                case 2: // Minutes
+                    clockNumber.textContent = totalMinutes;
+                    clockLabel.textContent = totalMinutes === 1 ? 'minute' : 'minutes';
+                    break;
+                case 3: // Seconds
+                    clockNumber.textContent = totalSeconds;
+                    clockLabel.textContent = totalSeconds === 1 ? 'second' : 'seconds';
+                    break;
+            }
+        }
+    </script>
+</body>
+</html>
